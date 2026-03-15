@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Indexed Image Creator</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <h1>🎨 Indexed Image Creator</h1>
+    <p>Convert any image to an indexed-colour (palette) image with full GIMP-compatible settings — all processing happens in your browser.</p>
+  </header>
+
+  <main>
+    <!-- Upload -->
+    <section id="upload-section">
+      <div id="drop-zone" role="button" tabindex="0" aria-label="Upload image">
+        <div id="drop-icon" aria-hidden="true">📁</div>
+        <p>Drag &amp; drop an image here, or
+          <label for="file-input" class="link-label">click to browse</label>
+        </p>
+        <input type="file" id="file-input" accept="image/*" aria-label="Choose image file" />
+        <p class="hint">Supports JPEG, PNG, GIF, WebP, BMP, SVG, TIFF, AVIF and more</p>
+      </div>
+    </section>
+
+    <!-- Main workspace (hidden until an image is loaded) -->
+    <div id="workspace" class="hidden">
+
+      <!-- Settings + preview in a two-column layout -->
+      <div id="workspace-inner">
+
+        <!-- Settings panel -->
+        <aside id="settings-panel" aria-label="Conversion settings">
+          <h2>Conversion Settings</h2>
+
+          <div class="setting-group">
+            <label for="palette-type">Colormap</label>
+            <select id="palette-type">
+              <option value="optimal">Generate optimum palette</option>
+              <option value="web">Use web-optimized palette</option>
+              <option value="bw">Use black and white (1-bit) palette</option>
+            </select>
+          </div>
+
+          <div class="setting-group" id="num-colors-group">
+            <label for="num-colors">
+              Maximum number of colors:
+              <strong id="num-colors-display">256</strong>
+            </label>
+            <input type="range" id="num-colors" min="2" max="256" value="256"
+                   aria-label="Maximum number of colors" />
+          </div>
+
+          <div class="setting-group">
+            <label for="color-dithering">Color dithering</label>
+            <select id="color-dithering">
+              <option value="none">No color dithering</option>
+              <option value="floyd-steinberg" selected>Floyd-Steinberg (normal)</option>
+              <option value="floyd-steinberg-reduced">Floyd-Steinberg (reduced color bleeding)</option>
+              <option value="fixed">Fixed dithering</option>
+            </select>
+          </div>
+
+          <div class="setting-group hidden" id="alpha-dithering-group">
+            <label for="alpha-dithering">Alpha dithering</label>
+            <select id="alpha-dithering">
+              <option value="none">No alpha dithering</option>
+              <option value="floyd-steinberg" selected>Floyd-Steinberg (normal)</option>
+              <option value="floyd-steinberg-reduced">Floyd-Steinberg (reduced color bleeding)</option>
+              <option value="fixed">Fixed alpha dithering</option>
+            </select>
+          </div>
+
+          <div class="setting-group">
+            <label class="checkbox-label">
+              <input type="checkbox" id="remove-unused" checked />
+              Remove unused colors from colormap
+            </label>
+          </div>
+
+          <button id="convert-btn" type="button">Convert to Indexed Image</button>
+
+          <div id="status" aria-live="polite"></div>
+        </aside>
+
+        <!-- Preview panel -->
+        <div id="preview-panel">
+          <div class="preview-card" id="original-card">
+            <h3>Original</h3>
+            <div class="canvas-wrap">
+              <canvas id="original-canvas" aria-label="Original image preview"></canvas>
+            </div>
+            <p class="image-info" id="original-info"></p>
+          </div>
+
+          <div class="preview-card" id="indexed-card">
+            <h3>Indexed</h3>
+            <div class="canvas-wrap">
+              <canvas id="indexed-canvas" aria-label="Indexed image preview"></canvas>
+            </div>
+            <p class="image-info" id="indexed-info"></p>
+            <button id="download-btn" type="button" class="hidden">⬇ Download Indexed PNG</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Palette swatches -->
+      <section id="palette-section" class="hidden" aria-label="Generated palette">
+        <h3>Color Palette <span id="palette-count"></span></h3>
+        <div id="palette-swatches" role="list" aria-label="Palette colors"></div>
+      </section>
+
+    </div><!-- /workspace -->
+  </main>
+
+  <footer>
+    <p>Built for <a href="https://pages.github.com/" target="_blank" rel="noopener">GitHub Pages</a> · All processing is done locally in your browser · No data is uploaded anywhere</p>
+  </footer>
+
+  <script src="script.js"></script>
+</body>
+</html>
