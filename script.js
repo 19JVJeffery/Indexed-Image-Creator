@@ -6,16 +6,26 @@
 
 // ========== Application State ==========
 
-const state = {
-  originalImageData: null, // ImageData of the loaded image
-  originalWidth: 0,
-  originalHeight: 0,
-  originalFileName: 'image',
-  hasAlpha: false,
-  currentPalette: null,    // Array of [r, g, b]
-  currentIndices: null,    // Uint8Array, one palette index per pixel
-  transparentIdx: null,    // Index of the transparent palette entry, or null
+// Default conversion settings shared across images
+const DEFAULT_SETTINGS = {
+  paletteType:    'optimal',
+  numColors:      256,
+  colorDithering: 'floyd-steinberg',
+  alphaDithering: 'floyd-steinberg',
+  removeUnused:   true,
 };
+
+// Each entry: { originalImageData, originalWidth, originalHeight,
+//               originalFileName, originalFileSize, originalFileType,
+//               hasAlpha, currentPalette, currentIndices, transparentIdx,
+//               settings: { paletteType, numColors, colorDithering, alphaDithering, removeUnused } }
+const imageList      = [];    // array of per-image state objects
+let   activeIdx      = 0;     // index of the currently displayed image
+let   linkedSettings = true;  // true = all images share the same settings
+
+function getActiveImage() {
+  return imageList[activeIdx] || null;
+}
 
 // ========== Colour Utilities ==========
 
@@ -536,119 +546,353 @@ function setStatus(msg, cls) {
   el.className = cls || '';
 }
 
+// ========== Settings Management ==========
+
+/** Read current values from the settings panel controls. */
+function readSettingsUI() {
+  return {
+    paletteType:    document.getElementById('palette-type').value,
+    numColors:      parseInt(document.getElementById('num-colors').value, 10),
+    colorDithering: document.getElementById('color-dithering').value,
+    alphaDithering: document.getElementById('alpha-dithering').value,
+    removeUnused:   document.getElementById('remove-unused').checked,
+  };
+}
+
+/** Push a settings object into the UI controls. */
+function applySettingsToUI(settings) {
+  document.getElementById('palette-type').value             = settings.paletteType;
+  document.getElementById('num-colors').value               = settings.numColors;
+  document.getElementById('num-colors-display').textContent = settings.numColors;
+  document.getElementById('color-dithering').value          = settings.colorDithering;
+  document.getElementById('alpha-dithering').value          = settings.alphaDithering;
+  document.getElementById('remove-unused').checked          = settings.removeUnused;
+  updatePaletteTypeUI();
+}
+
+/** Called when any settings control changes — syncs back to image state(s). */
+function onSettingChanged() {
+  const s = readSettingsUI();
+  if (linkedSettings) {
+    imageList.forEach(img => { img.settings = { ...s }; });
+  } else {
+    const img = getActiveImage();
+    if (img) img.settings = { ...s };
+  }
+}
+
+// ========== Image Tab Management ==========
+
+function truncateFilename(name, maxLen) {
+  if (name.length <= maxLen) return name;
+  const extIdx = name.lastIndexOf('.');
+  const ext    = extIdx > 0 ? name.slice(extIdx) : '';
+  return name.slice(0, maxLen - ext.length - 1) + '…' + ext;
+}
+
+function buildImageTabs() {
+  const tabsEl = document.getElementById('image-tabs');
+  tabsEl.innerHTML = '';
+  const multi = imageList.length > 1;
+  tabsEl.classList.toggle('hidden', !multi);
+  document.getElementById('convert-all-btn').classList.toggle('hidden', !multi);
+  const anyConverted = imageList.some(img => img.currentPalette);
+  document.getElementById('download-all-btn').classList.toggle('hidden', !multi || !anyConverted);
+  if (!multi) return;
+
+  imageList.forEach((img, i) => {
+    const tab = document.createElement('button');
+    tab.type = 'button';
+    tab.className = 'image-tab' + (i === activeIdx ? ' active' : '');
+    tab.setAttribute('role', 'tab');
+    tab.setAttribute('aria-selected', String(i === activeIdx));
+    tab.title = img.originalFileName;
+
+    const nameSpan = document.createElement('span');
+    nameSpan.className = 'tab-name';
+    nameSpan.textContent = truncateFilename(img.originalFileName, 18);
+    tab.appendChild(nameSpan);
+
+    if (img.currentPalette) {
+      const dot = document.createElement('span');
+      dot.className = 'tab-done';
+      dot.textContent = ' ✓';
+      tab.appendChild(dot);
+    }
+
+    const rmBtn = document.createElement('button');
+    rmBtn.type = 'button';
+    rmBtn.className = 'tab-close';
+    rmBtn.setAttribute('aria-label', 'Remove ' + img.originalFileName);
+    rmBtn.textContent = '×';
+    rmBtn.addEventListener('click', e => { e.stopPropagation(); removeImage(i); });
+    tab.appendChild(rmBtn);
+
+    tab.addEventListener('click', () => switchImage(i));
+    tabsEl.appendChild(tab);
+  });
+
+  const addBtn = document.createElement('button');
+  addBtn.type = 'button';
+  addBtn.className = 'tab-add';
+  addBtn.title = 'Add more images';
+  addBtn.textContent = '＋ Add';
+  addBtn.addEventListener('click', () => document.getElementById('file-input').click());
+  tabsEl.appendChild(addBtn);
+}
+
+function switchImage(newIdx) {
+  if (newIdx < 0 || newIdx >= imageList.length) return;
+  if (!linkedSettings) {
+    const prev = getActiveImage();
+    if (prev) prev.settings = { ...readSettingsUI() };
+  }
+  activeIdx = newIdx;
+  renderActiveImage();
+  buildImageTabs();
+}
+
+function removeImage(idx) {
+  imageList.splice(idx, 1);
+  if (imageList.length === 0) {
+    activeIdx = 0;
+    document.getElementById('workspace').classList.add('hidden');
+    updateDropZoneLabel();
+    return;
+  }
+  if (activeIdx >= imageList.length) activeIdx = imageList.length - 1;
+  renderActiveImage();
+  buildImageTabs();
+  updateDropZoneLabel();
+}
+
+function updateDropZoneLabel() {
+  const p = document.querySelector('#drop-zone p');
+  if (!p) return;
+  if (imageList.length === 0) {
+    p.innerHTML = 'Drag &amp; drop images here, or <label for="file-input" class="link-label">click to browse</label>';
+  } else if (imageList.length === 1) {
+    p.innerHTML = `<strong>${imageList[0].originalFileName}</strong> loaded — drag more images to add`;
+  } else {
+    p.innerHTML = `<strong>${imageList.length} images</strong> loaded — drag more to add`;
+  }
+}
+
+// ========== Palette Panel ==========
+
+function updatePalettePanel(palette, transparentIdx) {
+  const section   = document.getElementById('palette-section');
+  const toggleBtn = document.getElementById('palette-toggle-btn');
+  const label     = document.getElementById('palette-toggle-label');
+
+  if (!palette) {
+    section.classList.remove('available', 'open');
+    toggleBtn.disabled = true;
+    toggleBtn.setAttribute('aria-expanded', 'false');
+    label.textContent = 'Palette';
+    return;
+  }
+
+  renderSwatches(palette, transparentIdx);
+  label.textContent = `Palette (${palette.length})`;
+  section.classList.add('available', 'open');
+  toggleBtn.disabled = false;
+  toggleBtn.setAttribute('aria-expanded', 'true');
+}
+
+function togglePalettePanel() {
+  const section   = document.getElementById('palette-section');
+  const toggleBtn = document.getElementById('palette-toggle-btn');
+  if (!section.classList.contains('available')) return;
+  const willOpen = !section.classList.contains('open');
+  section.classList.toggle('open', willOpen);
+  toggleBtn.setAttribute('aria-expanded', String(willOpen));
+}
+
+// ========== Preview Rendering ==========
+
+function renderActiveImage() {
+  const img = getActiveImage();
+  if (!img) return;
+
+  applySettingsToUI(img.settings);
+  document.getElementById('alpha-dithering-group')
+    .classList.toggle('hidden', !img.hasAlpha);
+
+  // Draw original preview
+  const origCanvas = document.getElementById('original-canvas');
+  origCanvas.width  = img.originalWidth;
+  origCanvas.height = img.originalHeight;
+  origCanvas.getContext('2d').putImageData(img.originalImageData, 0, 0);
+
+  document.getElementById('original-info').textContent =
+    `${img.originalWidth}×${img.originalHeight} · ${img.originalFileType || 'image'} · ${(img.originalFileSize / 1024).toFixed(1)} KB`;
+
+  // Draw indexed result (if available)
+  const indexedCanvas = document.getElementById('indexed-canvas');
+  if (img.currentPalette) {
+    renderIndexed(indexedCanvas, img.originalWidth, img.originalHeight,
+                  img.currentPalette, img.currentIndices, img.transparentIdx);
+    document.getElementById('indexed-info').textContent =
+      `${img.currentPalette.length} colour${img.currentPalette.length !== 1 ? 's' : ''} · ${img.originalWidth}×${img.originalHeight}`;
+    updatePalettePanel(img.currentPalette, img.transparentIdx);
+    document.getElementById('download-btn').classList.remove('hidden');
+    setStatus(`Done — ${img.currentPalette.length} colour${img.currentPalette.length !== 1 ? 's' : ''}`, 'done');
+  } else {
+    indexedCanvas.width  = img.originalWidth;
+    indexedCanvas.height = img.originalHeight;
+    indexedCanvas.getContext('2d').clearRect(0, 0, img.originalWidth, img.originalHeight);
+    document.getElementById('indexed-info').textContent = '';
+    document.getElementById('download-btn').classList.add('hidden');
+    updatePalettePanel(null, null);
+    setStatus('Image loaded — click Convert to begin.', '');
+  }
+}
+
 // ========== Core Conversion Pipeline ==========
 
+/** Convert a single image state object in-place using its own settings. */
+function convertSingleImage(imgState) {
+  const { paletteType, numColors, colorDithering, alphaDithering, removeUnused } = imgState.settings;
+  const imgData = imgState.originalImageData;
+  const { originalWidth: width, originalHeight: height } = imgState;
+
+  // 1. Build palette
+  let palette = buildPalette(imgData, paletteType, numColors);
+
+  // Clamp palette size for web palette when numColors < 216
+  if (paletteType === 'web' && numColors < palette.length) {
+    palette = palette.slice(0, numColors);
+  }
+
+  // 2. Reserve a transparent palette entry if the image has alpha
+  let transparentIdx = null;
+  if (imgState.hasAlpha) {
+    transparentIdx = palette.length;
+    palette = [...palette, [0, 0, 0]]; // placeholder entry
+  }
+
+  // 3. Enforce max-palette-size constraint (PNG indexed max = 256)
+  if (palette.length > 256) {
+    palette = palette.slice(0, 256);
+    if (transparentIdx !== null && transparentIdx >= 256) {
+      transparentIdx = 255;
+      palette[255] = [0, 0, 0];
+    }
+  }
+
+  // 4. Quantise / dither
+  let indices = quantise(imgData, palette, colorDithering, alphaDithering,
+                         imgState.hasAlpha, transparentIdx);
+
+  // 5. Remove unused palette entries
+  if (removeUnused) {
+    const used = new Set(Array.from(indices));
+    const remap = new Map();
+    const newPalette = [];
+    for (let i = 0; i < palette.length; i++) {
+      if (used.has(i)) {
+        remap.set(i, newPalette.length);
+        newPalette.push(palette[i]);
+      }
+    }
+    for (let i = 0; i < indices.length; i++) {
+      indices[i] = remap.get(indices[i]) ?? 0;
+    }
+    if (transparentIdx !== null) {
+      transparentIdx = remap.has(transparentIdx) ? remap.get(transparentIdx) : null;
+    }
+    palette = newPalette;
+  }
+
+  imgState.currentPalette = palette;
+  imgState.currentIndices = indices;
+  imgState.transparentIdx = transparentIdx;
+}
+
 function runConversion() {
-  if (!state.originalImageData) return;
+  const img = getActiveImage();
+  if (!img) return;
 
-  const paletteType     = document.getElementById('palette-type').value;
-  const numColors       = parseInt(document.getElementById('num-colors').value, 10);
-  const colorDithering  = document.getElementById('color-dithering').value;
-  const alphaDithering  = document.getElementById('alpha-dithering').value;
-  const removeUnused    = document.getElementById('remove-unused').checked;
+  onSettingChanged(); // sync UI settings to image state(s)
 
-  const btn = document.getElementById('convert-btn');
-  btn.disabled = true;
+  const convertBtn    = document.getElementById('convert-btn');
+  const convertAllBtn = document.getElementById('convert-all-btn');
+  convertBtn.disabled = true;
+  if (!convertAllBtn.classList.contains('hidden')) convertAllBtn.disabled = true;
   setStatus('Processing…', 'processing');
 
-  // Yield to the browser so the UI updates before the (potentially slow) work starts.
   setTimeout(() => {
     try {
-      const imgData = state.originalImageData;
-      const { width, height } = imgData;
-
-      // 1. Build palette
-      let palette = buildPalette(imgData, paletteType, numColors);
-
-      // Clamp palette size for web palette when numColors < 216
-      if (paletteType === 'web' && numColors < palette.length) {
-        palette = palette.slice(0, numColors);
-      }
-
-      // 2. Reserve a transparent palette entry if the image has alpha
-      let transparentIdx = null;
-      if (state.hasAlpha) {
-        transparentIdx = palette.length;
-        palette = [...palette, [0, 0, 0]]; // placeholder entry
-      }
-
-      // 3. Enforce max-palette-size constraint (PNG indexed max = 256)
-      if (palette.length > 256) {
-        palette = palette.slice(0, 256);
-        if (transparentIdx !== null && transparentIdx >= 256) {
-          transparentIdx = 255;
-          palette[255] = [0, 0, 0];
-        }
-      }
-
-      // 4. Quantise / dither
-      let indices = quantise(
-        imgData, palette, colorDithering, alphaDithering,
-        state.hasAlpha, transparentIdx
-      );
-
-      // 5. Remove unused palette entries
-      if (removeUnused) {
-        const used = new Set(Array.from(indices));
-        const remap = new Map();
-        const newPalette = [];
-
-        for (let i = 0; i < palette.length; i++) {
-          if (used.has(i)) {
-            remap.set(i, newPalette.length);
-            newPalette.push(palette[i]);
-          }
-        }
-        for (let i = 0; i < indices.length; i++) {
-          indices[i] = remap.get(indices[i]) ?? 0;
-        }
-        if (transparentIdx !== null) {
-          transparentIdx = remap.has(transparentIdx) ? remap.get(transparentIdx) : null;
-        }
-        palette = newPalette;
-      }
-
-      // 6. Store result
-      state.currentPalette   = palette;
-      state.currentIndices   = indices;
-      state.transparentIdx   = transparentIdx;
-
-      // 7. Render preview
-      renderIndexed(
-        document.getElementById('indexed-canvas'),
-        width, height, palette, indices, transparentIdx
-      );
-
-      // 8. Update UI
-      document.getElementById('indexed-info').textContent =
-        `${palette.length} colour${palette.length !== 1 ? 's' : ''} · ${width}×${height}`;
-
-      renderSwatches(palette, transparentIdx);
-
-      document.getElementById('download-btn').classList.remove('hidden');
-      document.getElementById('palette-section').classList.remove('hidden');
-
-      setStatus(`Done — ${palette.length} colour${palette.length !== 1 ? 's' : ''}`, 'done');
+      convertSingleImage(img);
+      renderActiveImage();
+      buildImageTabs();
     } catch (err) {
       console.error(err);
       setStatus('Error: ' + err.message, 'error');
     }
-
-    btn.disabled = false;
+    convertBtn.disabled    = false;
+    convertAllBtn.disabled = false;
   }, 20);
+}
+
+function yieldToUI() {
+  return new Promise(resolve => setTimeout(resolve, 0));
+}
+
+async function runConversionAll() {
+  if (imageList.length === 0) return;
+
+  onSettingChanged();
+
+  const convertBtn    = document.getElementById('convert-btn');
+  const convertAllBtn = document.getElementById('convert-all-btn');
+  convertBtn.disabled    = true;
+  convertAllBtn.disabled = true;
+
+  let done = 0, errors = 0;
+  const total = imageList.length;
+
+  for (let i = 0; i < total; i++) {
+    setStatus(`Processing ${i + 1}/${total}…`, 'processing');
+    await yieldToUI();
+    try {
+      convertSingleImage(imageList[i]);
+      done++;
+    } catch (err) {
+      console.error(`Error converting ${imageList[i].originalFileName}:`, err);
+      errors++;
+    }
+  }
+
+  renderActiveImage();
+  buildImageTabs();
+
+  if (errors === 0) {
+    setStatus(`Done — converted ${done} image${done !== 1 ? 's' : ''}`, 'done');
+  } else {
+    setStatus(`${done} converted, ${errors} failed`, 'error');
+  }
+
+  convertBtn.disabled    = false;
+  convertAllBtn.disabled = false;
 }
 
 // ========== Download ==========
 
-function downloadPNG() {
-  const { currentPalette, currentIndices, originalWidth, originalHeight, transparentIdx, originalFileName } = state;
+/** Stagger between successive downloads so browsers don't block them. */
+const DOWNLOAD_STAGGER_MS = 150;
+
+function downloadImageState(imgState) {
+  const { currentPalette, currentIndices, originalWidth, originalHeight,
+          transparentIdx, originalFileName } = imgState;
   if (!currentPalette || !currentIndices) return;
 
-  const bytes = encodeIndexedPNG(originalWidth, originalHeight, currentPalette, currentIndices, transparentIdx);
+  const bytes = encodeIndexedPNG(originalWidth, originalHeight,
+                                  currentPalette, currentIndices, transparentIdx);
   const blob = new Blob([bytes], { type: 'image/png' });
   const url  = URL.createObjectURL(blob);
-
-  const a = document.createElement('a');
+  const a    = document.createElement('a');
   a.href     = url;
   a.download = originalFileName.replace(/\.[^.]+$/, '') + '-indexed.png';
   document.body.appendChild(a);
@@ -657,14 +901,34 @@ function downloadPNG() {
   URL.revokeObjectURL(url);
 }
 
+function downloadPNG() {
+  const img = getActiveImage();
+  if (img) downloadImageState(img);
+}
+
+async function downloadAll() {
+  const converted = imageList.filter(img => img.currentPalette);
+  for (const img of converted) {
+    downloadImageState(img);
+    await new Promise(resolve => setTimeout(resolve, DOWNLOAD_STAGGER_MS));
+  }
+}
+
 // ========== Image Loading ==========
 
-function loadFile(file) {
-  if (!file || !file.type.startsWith('image/')) {
-    setStatus('Please select a valid image file.', 'error');
+function loadFiles(fileList) {
+  const files = Array.from(fileList).filter(f => f.type.startsWith('image/'));
+  if (files.length === 0) {
+    setStatus('Please select valid image file(s).', 'error');
     return;
   }
+  if (files.length < fileList.length) {
+    setStatus(`Skipped ${fileList.length - files.length} non-image file(s).`, '');
+  }
+  files.forEach(loadSingleFile);
+}
 
+function loadSingleFile(file) {
   const url = URL.createObjectURL(file);
   const img = new Image();
 
@@ -672,64 +936,46 @@ function loadFile(file) {
     const canvas = document.createElement('canvas');
     canvas.width  = img.naturalWidth;
     canvas.height = img.naturalHeight;
-
     const ctx = canvas.getContext('2d');
     ctx.drawImage(img, 0, 0);
     URL.revokeObjectURL(url);
 
     const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
 
-    // Detect whether the image has any non-opaque pixels
     let hasAlpha = false;
     for (let i = 3; i < imgData.data.length; i += 4) {
       if (imgData.data[i] < 255) { hasAlpha = true; break; }
     }
 
-    state.originalImageData = imgData;
-    state.originalWidth     = canvas.width;
-    state.originalHeight    = canvas.height;
-    state.originalFileName  = file.name;
-    state.hasAlpha          = hasAlpha;
+    // Inherit settings from first image if linked, otherwise start from defaults
+    const settings = linkedSettings && imageList.length > 0
+      ? { ...imageList[0].settings }
+      : { ...DEFAULT_SETTINGS };
 
-    // Reset any previous results
-    state.currentPalette  = null;
-    state.currentIndices  = null;
-    state.transparentIdx  = null;
+    imageList.push({
+      originalImageData: imgData,
+      originalWidth:     canvas.width,
+      originalHeight:    canvas.height,
+      originalFileName:  file.name,
+      originalFileSize:  file.size,
+      originalFileType:  file.type,
+      hasAlpha,
+      currentPalette:    null,
+      currentIndices:    null,
+      transparentIdx:    null,
+      settings,
+    });
 
-    // Show/hide alpha-dithering control
-    document.getElementById('alpha-dithering-group')
-      .classList.toggle('hidden', !hasAlpha);
-
-    // Draw original image preview
-    const origCanvas = document.getElementById('original-canvas');
-    origCanvas.width  = canvas.width;
-    origCanvas.height = canvas.height;
-    origCanvas.getContext('2d').drawImage(img, 0, 0);
-
-    document.getElementById('original-info').textContent =
-      `${canvas.width}×${canvas.height} · ${file.type || 'image'} · ${(file.size / 1024).toFixed(1)} KB`;
-
-    // Reset result pane
-    const indexedCanvas = document.getElementById('indexed-canvas');
-    indexedCanvas.width  = canvas.width;
-    indexedCanvas.height = canvas.height;
-    indexedCanvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
-    document.getElementById('indexed-info').textContent = '';
-    document.getElementById('download-btn').classList.add('hidden');
-    document.getElementById('palette-section').classList.add('hidden');
-    document.getElementById('palette-swatches').innerHTML = '';
-    setStatus('Image loaded — click Convert to begin.', '');
-
+    activeIdx = imageList.length - 1;
     document.getElementById('workspace').classList.remove('hidden');
-
-    // Update drop zone label
-    document.getElementById('drop-zone').querySelector('p').innerHTML =
-      `<strong>${file.name}</strong> loaded — drag another image to replace`;
+    renderActiveImage();
+    buildImageTabs();
+    updateDropZoneLabel();
   };
 
   img.onerror = () => {
     URL.revokeObjectURL(url);
-    setStatus('Could not load image. Please try another file.', 'error');
+    setStatus('Could not load ' + file.name + '. Please try another file.', 'error');
   };
 
   img.src = url;
@@ -738,29 +984,59 @@ function loadFile(file) {
 // ========== Settings: enable/disable num-colors slider ==========
 
 function updatePaletteTypeUI() {
-  const paletteType = document.getElementById('palette-type').value;
+  const paletteType    = document.getElementById('palette-type').value;
   const numColorsGroup = document.getElementById('num-colors-group');
-  // Hide the slider for fixed-size palettes where it has no effect
   numColorsGroup.classList.toggle('hidden', paletteType === 'bw');
+}
+
+// ========== Layout: measure header/footer for sticky/fixed positioning ==========
+
+function updateLayoutVars() {
+  const header = document.querySelector('header');
+  const footer = document.querySelector('footer');
+  if (header) {
+    document.documentElement.style.setProperty(
+      '--header-height', header.getBoundingClientRect().height + 'px');
+  }
+  if (footer) {
+    document.documentElement.style.setProperty(
+      '--footer-height', footer.getBoundingClientRect().height + 'px');
+  }
 }
 
 // ========== Event Wiring ==========
 
 document.addEventListener('DOMContentLoaded', () => {
-  const dropZone   = document.getElementById('drop-zone');
-  const fileInput  = document.getElementById('file-input');
-  const convertBtn = document.getElementById('convert-btn');
-  const downloadBtn = document.getElementById('download-btn');
-  const numColors  = document.getElementById('num-colors');
-  const paletteType = document.getElementById('palette-type');
+  updateLayoutVars();
+  window.addEventListener('resize', updateLayoutVars);
+
+  const dropZone       = document.getElementById('drop-zone');
+  const fileInput      = document.getElementById('file-input');
+  const convertBtn     = document.getElementById('convert-btn');
+  const convertAllBtn  = document.getElementById('convert-all-btn');
+  const downloadBtn    = document.getElementById('download-btn');
+  const downloadAllBtn = document.getElementById('download-all-btn');
+  const numColors      = document.getElementById('num-colors');
+  const paletteType    = document.getElementById('palette-type');
+  const linkedToggle   = document.getElementById('linked-settings');
+  const paletteToggle  = document.getElementById('palette-toggle-btn');
+  const paletteClose   = document.getElementById('palette-close-btn');
 
   // --- File input ---
-  dropZone.addEventListener('click', () => fileInput.click());
+  // Guard prevents double-trigger: clicking the <label> already opens the dialog natively;
+  // only fire fileInput.click() when the click originated outside the label.
+  dropZone.addEventListener('click', e => {
+    if (!e.target.closest('label')) fileInput.click();
+  });
   dropZone.addEventListener('keydown', e => {
     if (e.key === 'Enter' || e.key === ' ') fileInput.click();
   });
   fileInput.addEventListener('change', () => {
-    if (fileInput.files[0]) loadFile(fileInput.files[0]);
+    // Capture as a plain array before resetting the input, because resetting
+    // clears the FileList and would make Array.from() return an empty array.
+    const files = Array.from(fileInput.files);
+    fileInput.value = ''; // reset so the same files can be re-selected next time
+    if (files.length > 0) loadFiles(files);
   });
 
   // --- Drag & drop ---
@@ -777,9 +1053,16 @@ document.addEventListener('DOMContentLoaded', () => {
     })
   );
   dropZone.addEventListener('drop', e => {
-    const file = e.dataTransfer.files[0];
-    if (file) loadFile(file);
+    loadFiles(e.dataTransfer.files);
   });
+
+  // --- Settings controls ---
+  ['palette-type', 'num-colors', 'color-dithering', 'alpha-dithering', 'remove-unused']
+    .forEach(id => {
+      const el = document.getElementById(id);
+      el.addEventListener('change', onSettingChanged);
+      el.addEventListener('input',  onSettingChanged);
+    });
 
   // --- Num-colors slider label ---
   numColors.addEventListener('input', () => {
@@ -790,9 +1073,25 @@ document.addEventListener('DOMContentLoaded', () => {
   paletteType.addEventListener('change', updatePaletteTypeUI);
   updatePaletteTypeUI();
 
+  // --- Linked settings toggle ---
+  linkedToggle.addEventListener('change', () => {
+    linkedSettings = linkedToggle.checked;
+    if (linkedSettings && imageList.length > 0) {
+      // Sync all images to the current UI settings
+      const s = readSettingsUI();
+      imageList.forEach(img => { img.settings = { ...s }; });
+    }
+  });
+
   // --- Convert ---
   convertBtn.addEventListener('click', runConversion);
+  convertAllBtn.addEventListener('click', runConversionAll);
 
   // --- Download ---
   downloadBtn.addEventListener('click', downloadPNG);
+  downloadAllBtn.addEventListener('click', downloadAll);
+
+  // --- Palette panel toggle ---
+  paletteToggle.addEventListener('click', togglePalettePanel);
+  paletteClose.addEventListener('click', togglePalettePanel);
 });
