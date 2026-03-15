@@ -15,25 +15,34 @@
   <main>
     <!-- Upload -->
     <section id="upload-section">
-      <div id="drop-zone" role="button" tabindex="0" aria-label="Upload image">
+      <div id="drop-zone" role="button" tabindex="0" aria-label="Upload images">
         <div id="drop-icon" aria-hidden="true">📁</div>
-        <p>Drag &amp; drop an image here, or
+        <p>Drag &amp; drop images here, or
           <label for="file-input" class="link-label">click to browse</label>
         </p>
-        <input type="file" id="file-input" accept="image/*" aria-label="Choose image file" />
-        <p class="hint">Supports JPEG, PNG, GIF, WebP, BMP, SVG, TIFF, AVIF and more</p>
+        <input type="file" id="file-input" accept="image/*" multiple aria-label="Choose one or more image files" />
+        <p class="hint">Supports JPEG, PNG, GIF, WebP, BMP, SVG, TIFF, AVIF and more · Multiple files allowed</p>
       </div>
     </section>
 
     <!-- Main workspace (hidden until an image is loaded) -->
     <div id="workspace" class="hidden">
 
+      <!-- Image tabs (shown when multiple images are loaded) -->
+      <div id="image-tabs" class="hidden" role="tablist" aria-label="Loaded images"></div>
+
       <!-- Settings + preview in a two-column layout -->
       <div id="workspace-inner">
 
         <!-- Settings panel -->
         <aside id="settings-panel" aria-label="Conversion settings">
-          <h2>Conversion Settings</h2>
+          <div class="settings-header">
+            <h2>Conversion Settings</h2>
+            <label class="checkbox-label linked-label" title="Apply these settings to all images">
+              <input type="checkbox" id="linked-settings" checked />
+              Linked
+            </label>
+          </div>
 
           <div class="setting-group">
             <label for="palette-type">Colormap</label>
@@ -80,7 +89,8 @@
             </label>
           </div>
 
-          <button id="convert-btn" type="button">Convert to Indexed Image</button>
+          <button id="convert-btn" type="button">Convert</button>
+          <button id="convert-all-btn" type="button" class="hidden">Convert All</button>
 
           <div id="status" aria-live="polite"></div>
         </aside>
@@ -101,21 +111,34 @@
               <canvas id="indexed-canvas" aria-label="Indexed image preview"></canvas>
             </div>
             <p class="image-info" id="indexed-info"></p>
-            <button id="download-btn" type="button" class="hidden">⬇ Download Indexed PNG</button>
+            <div class="download-row">
+              <button id="download-btn" type="button" class="hidden">⬇ Download</button>
+              <button id="download-all-btn" type="button" class="hidden">⬇ Download All</button>
+            </div>
           </div>
         </div>
       </div>
 
-      <!-- Palette swatches -->
-      <section id="palette-section" class="hidden" aria-label="Generated palette">
-        <h3>Color Palette <span id="palette-count"></span></h3>
-        <div id="palette-swatches" role="list" aria-label="Palette colors"></div>
-      </section>
-
     </div><!-- /workspace -->
+
+    <!-- Colour palette panel — fixed overlay above footer, toggled via the footer button -->
+    <section id="palette-section" aria-label="Generated palette">
+      <div class="palette-panel-header">
+        <h3>Color Palette <span id="palette-count"></span></h3>
+        <button type="button" id="palette-close-btn" aria-label="Close palette">✕</button>
+      </div>
+      <div id="palette-swatches" role="list" aria-label="Palette colors"></div>
+    </section>
+
   </main>
 
   <footer>
+    <button id="palette-toggle-btn" type="button" class="palette-toggle-btn" disabled
+            aria-expanded="false" aria-controls="palette-section">
+      <span class="palette-toggle-icon">🎨</span>
+      <span id="palette-toggle-label">Palette</span>
+      <span class="palette-toggle-arrow">▲</span>
+    </button>
     <p>Built for <a href="https://pages.github.com/" target="_blank" rel="noopener">GitHub Pages</a> · All processing is done locally in your browser · No data is uploaded anywhere</p>
   </footer>
 
